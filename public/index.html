@@ -67,9 +67,14 @@
                             <option value="classic">Template 2: Ya Kiserikali (Table Grid)</option>
                         </select>
                     </div>
-                    <button onclick="generateSchedule()" class="bg-amber-600 hover:bg-amber-700 text-white px-6 py-2 rounded-lg font-bold shadow transition">
-                        Gawanya na Panga Ratiba Otomatiki
-                    </button>
+                    <div class="flex flex-wrap gap-3">
+                        <button onclick="rotateAndGenerate()" class="bg-slate-600 hover:bg-slate-700 text-white px-4 py-2 rounded-lg font-medium shadow transition" title="Badilisha mgawanyo ili kuhakikisha haki">
+                            🔄 Badilisha Mgawanyo
+                        </button>
+                        <button onclick="generateSchedule()" class="bg-amber-600 hover:bg-amber-700 text-white px-6 py-2 rounded-lg font-bold shadow transition">
+                            Gawanya na Panga Ratiba Otomatiki
+                        </button>
+                    </div>
                 </div>
 
                 <!-- SEHEMU YA KUONESHA RATIBA -->
@@ -90,7 +95,42 @@
     </div>
 
     <script>
-        let soldiers = [];
+        const STORAGE_KEY = 'guardSystem.soldiers';
+        const ROTATION_KEY = 'guardSystem.rotation';
+
+        // Escape user input before injecting it into innerHTML
+        function escapeHtml(value) {
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function loadSoldiers() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                const parsed = raw ? JSON.parse(raw) : [];
+                if (!Array.isArray(parsed)) return [];
+                return parsed
+                    .filter(s => s && typeof s.name === 'string' && Number.isFinite(s.serviceNumber))
+                    .map(s => ({ name: s.name, serviceNumber: Number(s.serviceNumber) }));
+            } catch (err) {
+                console.warn('Could not read saved roster, starting empty.', err);
+                return [];
+            }
+        }
+
+        function saveSoldiers() {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(soldiers));
+            } catch (err) {
+                console.warn('Could not save roster; it will be lost on refresh.', err);
+            }
+        }
+
+        let soldiers = loadSoldiers();
         const posts = ["IKULU", "PBZ", "ULINZI KITUO", "CRO"];
         const shifts = ["Shift 1 (Saa 02:00 - 10:00)", "Shift 2 (Saa 10:00 - 18:00)", "Shift 3 (Saa 18:00 - 02:00)"];
 
@@ -98,8 +138,18 @@
 
         document.getElementById('soldierForm').addEventListener('submit', function(e) {
             e.preventDefault();
-            const name = document.getElementById('name').value;
-            const serviceNumber = parseInt(document.getElementById('serviceNumber').value);
+            const name = document.getElementById('name').value.trim();
+            const serviceNumber = parseInt(document.getElementById('serviceNumber').value, 10);
+
+            if (!name || !Number.isInteger(serviceNumber)) {
+                alert("Tafadhali jaza jina na namba ya kijeshi kwa njia sahihi.");
+                return;
+            }
+
+            if (soldiers.some(s => s.serviceNumber === serviceNumber)) {
+                alert(`Namba ya kijeshi ${serviceNumber} tayari imesajiliwa. Tumia namba nyingine.`);
+                return;
+            }
 
             soldiers.push({ name, serviceNumber });
             // Panga askari kuanzia namba ndogo kwenda kubwa au kinyume chake
@@ -107,6 +157,7 @@
 
             document.getElementById('name').value = '';
             document.getElementById('serviceNumber').value = '';
+            saveSoldiers();
             updateSoldiersUI();
         });
 
@@ -118,8 +169,8 @@
             soldiers.forEach((s, index) => {
                 listContainer.innerHTML += `
                     <div class="flex justify-between items-center bg-white p-2 rounded border text-sm">
-                        <span><b>${s.name}</b> (No: ${s.serviceNumber})</span>
-                        <button onclick="removeSoldier(${index})" class="text-red-500 hover:text-red-700 font-bold px-2">×</button>
+                        <span><b>${escapeHtml(s.name)}</b> (No: ${escapeHtml(s.serviceNumber)})</span>
+                        <button onclick="removeSoldier(${index})" class="text-red-500 hover:text-red-700 font-bold px-2" title="Ondoa askari">&times;</button>
                     </div>
                 `;
             });
@@ -127,6 +178,7 @@
 
         function removeSoldier(index) {
             soldiers.splice(index, 1);
+            saveSoldiers();
             updateSoldiersUI();
         }
 
@@ -137,7 +189,15 @@
                 return;
             }
 
+            // Rotating the roster keeps duties fair: the same guards are not always
+            // stuck on the first post/shift every time a new roster is generated.
+            const rotation = parseInt(localStorage.getItem(ROTATION_KEY) || '0', 10) || 0;
             let availableSoldiers = [...soldiers];
+            if (availableSoldiers.length) {
+                const offset = rotation % availableSoldiers.length;
+                availableSoldiers = availableSoldiers.slice(offset).concat(availableSoldiers.slice(0, offset));
+            }
+
             let htmlContent = '';
             const template = document.getElementById('templateSelector').value;
 
@@ -165,8 +225,8 @@
                         postHtml += `
                             <div class="bg-white p-3 rounded border shadow-sm">
                                 <div class="text-xs font-bold text-indigo-600 mb-1">${d.shift}</div>
-                                <div class="text-sm">⭐ <b>Senior:</b> ${d.senior.name} (${d.senior.serviceNumber})</div>
-                                <div class="text-sm">🛡️ <b>Junior:</b> ${d.junior.name} (${d.junior.serviceNumber})</div>
+                                <div class="text-sm">⭐ <b>Senior:</b> ${escapeHtml(d.senior.name)} (${escapeHtml(d.senior.serviceNumber)})</div>
+                                <div class="text-sm">🛡️ <b>Junior:</b> ${escapeHtml(d.junior.name)} (${escapeHtml(d.junior.serviceNumber)})</div>
                             </div>
                         `;
                     });
@@ -189,8 +249,8 @@
                         postHtml += `
                             <tr class="border-b">
                                 <td class="p-2 border font-medium text-slate-600">${d.shift}</td>
-                                <td class="p-2 border">⭐ ${d.senior.name} (${d.senior.serviceNumber})</td>
-                                <td class="p-2 border">🛡️ ${d.junior.name} (${d.junior.serviceNumber})</td>
+                                <td class="p-2 border">⭐ ${escapeHtml(d.senior.name)} (${escapeHtml(d.senior.serviceNumber)})</td>
+                                <td class="p-2 border">🛡️ ${escapeHtml(d.junior.name)} (${escapeHtml(d.junior.serviceNumber)})</td>
                             </tr>
                         `;
                     });
@@ -201,6 +261,20 @@
             });
 
             document.getElementById('scheduleContent').innerHTML = htmlContent;
+        }
+
+        // Onyesha orodha iliyohifadhiwa mara tu ukurasa unapofunguliwa
+        updateSoldiersUI();
+
+        function rotateAndGenerate() {
+            const step = posts.length * shifts.length || 1;
+            const current = parseInt(localStorage.getItem(ROTATION_KEY) || '0', 10) || 0;
+            try {
+                localStorage.setItem(ROTATION_KEY, String(current + step));
+            } catch (err) {
+                console.warn('Could not save rotation.', err);
+            }
+            generateSchedule();
         }
 
         function changeTemplate() {
